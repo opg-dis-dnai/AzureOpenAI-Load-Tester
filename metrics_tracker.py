@@ -14,8 +14,8 @@ class MetricsTracker:
             "total_tokens": 0,
             "start_time": time.time(),
             "test_complete": False,
-            "tpm": 0,
             "rate_limit_calls": 0,
+            "avg_response_time": 0,
         }
 
     async def update_metric(self, metric_name: str, value: int):
@@ -29,6 +29,14 @@ class MetricsTracker:
                     )
                 elif metric_name == "total_tokens":
                     self.metrics["total_tokens"] += value
+                elif metric_name == "avg_response_time":
+                    self.metrics["avg_response_time"] = (
+                        self.metrics["avg_response_time"]
+                        * self.metrics["successful_calls"]
+                        + value
+                    ) / (self.metrics["successful_calls"] + 1)
+                    self.metrics["successful_calls"] += 1
+
                 else:
                     self.metrics[metric_name] += value
 
@@ -57,6 +65,7 @@ class MetricsTracker:
                 if elapsed_time > 0
                 else 0
             )
+
             return dict(self.metrics, tokens_per_minute=tokens_per_minute)
 
     async def set_test_complete(self, value: bool = True) -> None:

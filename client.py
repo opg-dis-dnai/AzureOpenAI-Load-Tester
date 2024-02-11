@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from openai import AsyncAzureOpenAI
 from metrics_tracker import MetricsTracker
 import tiktoken
+import time
 
 
 class AsyncAzureOpenAIClient:
@@ -22,7 +23,11 @@ class AsyncAzureOpenAIClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        self.client = AsyncAzureOpenAI(azure_endpoint, api_key, api_version)
+        self.client = AsyncAzureOpenAI(
+            azure_endpoint=self.azure_endpoint,
+            api_key=self.api_key,
+            api_version=self.api_version,
+        )
         self.metrics_tracker = metrics_tracker
         self.tiktoken = tiktoken.get_encoding("cl100k_base")
 
@@ -38,16 +43,17 @@ class AsyncAzureOpenAIClient:
         }
         await self.metrics_tracker.update_metric("active_calls", 1)
         token_count = len(self.tiktoken.encode(message))
-
+        start_time = time.perf_counter()
         try:
             response = await self.client.chat.completions.create(
                 model=payload["model"],
                 messages=payload["messages"],
                 max_tokens=payload["max_tokens"],
             )
+            end_time = time.perf_counter()
+            response_time = end_time - start_time
+            await self.metrics_tracker.update_metric("avg_response_time", response_time)
             await self.metrics_tracker.update_metric("total_tokens", token_count)
-
-            await self.metrics_tracker.update_metric("successful_calls", 1)
 
         except httpx.HTTPStatusError as e:
 

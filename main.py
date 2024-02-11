@@ -57,7 +57,7 @@ async def main_async():
         azure_endpoint=args.endpoint,
         api_key=args.api_key,
         metrics_tracker=metrics_tracker,
-        max_tokens=args.token_count,  # Assuming this is the max_tokens for each request
+        max_tokens=args.max_tokens,
     )
 
     # Initialize and start the live monitoring
@@ -68,7 +68,7 @@ async def main_async():
     # Run the test
     await run_test(args, client, live_monitor, metrics_tracker, message=test_string)
 
-    # Final update to the live monitor (optional if live_monitor automatically updates on test completion)
+    # Final update to the live monitor
     live_monitor.final_update()
 
 
