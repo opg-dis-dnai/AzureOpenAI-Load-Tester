@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.live import Live
 import re
-from datetime import timedelta
+from datetime import timedelta, datetime
 import os
 from openai import AsyncAzureOpenAI
 from typing import Optional
@@ -17,7 +17,6 @@ import httpx
 
 def duration_type(duration_str):
     match = re.match(r"(\d+)(s|m|h)", duration_str)
-
     if not match:
         raise argparse.ArgumentTypeError("Invalid duration format")
 
@@ -55,7 +54,9 @@ parser.add_argument(
 
 # Logging configuration
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename=f"test-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.log",
 )
 
 
@@ -120,32 +121,54 @@ def generate_test_string(target_token_count: int):
 # Metrics tracker class
 class MetricsTracker:
     def __init__(self):
+        self.lock = asyncio.Lock()
         self.active_calls = 0
-        self.active_successful_calls = 0  # Track successful calls separately
+        self.active_successful_calls = 0
         self.max_concurrent_calls = 0
         self.successful_calls = 0
         self.unsuccessful_calls = 0
-        self.max_concurrent_successful_calls = (
-            0  # Track max concurrent successful calls
-        )
+
         self.total_tpm = 0
         self.start_time = time.time()
         self.rate_limit = 0
-        self.total_token = 0
+        self.total_tokens = 0
+
+        self.task_complete = False
+
+    async def safe_update(self, func, *args, **kwargs):
+        async with self.lock:
+            result = func(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                await result
 
     def update_max_concurrent(self):
         self.max_concurrent_calls = max(self.max_concurrent_calls, self.active_calls)
 
-    def update_max_concurrent_successful(self):
-        self.max_concurrent_successful_calls = max(
-            self.max_concurrent_successful_calls, self.active_successful_calls
-        )
-
     def update_tpm(self, token_count: int):
-        self.total_token += token_count  # Accumulate the tokens
-        print(self.total_token)
+        self.total_tokens += token_count  # Accumulate the tokens
         elapsed_time = time.time() - self.start_time
         self.total_tpm = (self.total_tokens / elapsed_time) * 60
+
+    async def get_metrics(self):
+        async with self.lock:
+            return {
+                "active_calls": self.active_calls,
+                "active_successful_calls": self.active_successful_calls,
+                "successful_calls": self.successful_calls,
+                "unsuccessful_calls": self.unsuccessful_calls,
+                "max_concurrent_calls": self.max_concurrent_calls,
+                "rate_limit": self.rate_limit,
+                "total_tpm": self.total_tpm,
+                "total_tokens": self.total_tokens,
+            }
+
+    async def set_test_complete(self):
+        async with self.lock:
+            self.test_complete = True
+
+    async def is_test_complete(self):
+        async with self.lock:
+            return self.test_complete
 
 
 # Async function to simulate an API call
@@ -158,30 +181,52 @@ async def test_api_call(
     test_string: str,
 ):
     # Update active calls
-    metrics.active_calls += 1
-    metrics.update_max_concurrent()
+    await metrics.safe_update(
+        lambda: setattr(metrics, "active_calls", metrics.active_calls + 1)
+    )
+
+    await metrics.safe_update(metrics.update_max_concurrent)
 
     try:
         # Placeholder for actual API call logic
         response = await client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": test_string}]
+            model=model,
+            messages=[{"role": "user", "content": test_string}],
+            max_tokens=1000,
         )
-        metrics.active_successful_calls += 1
-        metrics.successful_calls += 1
-        metrics.update_tpm(token_count)
-        metrics.update_max_concurrent_successful()  # Update max concurrent successful calls
+        await metrics.safe_update(
+            lambda: setattr(
+                metrics, "active_successful_calls", metrics.active_successful_calls + 1
+            )
+        )
+        await metrics.safe_update(
+            lambda: setattr(metrics, "successful_calls", metrics.successful_calls + 1)
+        )
+        await metrics.safe_update(metrics.update_tpm, token_count)
     except httpx.HTTPStatusError as e:
-        metrics.unsuccessful_calls += 1
+        await metrics.safe_update(
+            lambda: setattr(
+                metrics, "unsuccessful_calls", metrics.unsuccessful_calls + 1
+            )
+        )
 
         if e.response.status_code == 429:
-            metrics.rate_limit += 1
+            await metrics.safe_update(
+                lambda: setattr(metrics, "rate_limit", metrics.rate_limit + 1)
+            )
 
     except Exception as e:
         logging.error(f"\nAPI call failed: {e}\n")
 
-        metrics.unsuccessful_calls += 1
+        await metrics.safe_update(
+            lambda: setattr(
+                metrics, "unsuccessful_calls", metrics.unsuccessful_calls + 1
+            )
+        )
     finally:
-        metrics.active_calls -= 1
+        await metrics.safe_update(
+            lambda: setattr(metrics, "active_calls", metrics.active_calls - 1)
+        )
 
 
 # Main async function to perform tests
@@ -197,7 +242,7 @@ async def perform_tests(
 ):
     semaphore = asyncio.Semaphore(concurrency_level)
     start_time = time.time()
-    tasks = []
+    tasks = set()
 
     async def semaphored_test_api_call(*args, **kwargs):
         async with semaphore:
@@ -207,79 +252,99 @@ async def perform_tests(
         if duration and time.time() - start_time > duration.total_seconds():
             break
 
-        if len(tasks) < concurrency_level:
+        while len(tasks) < concurrency_level:
             new_task = asyncio.create_task(
                 semaphored_test_api_call(
                     model, api_key, token_count, metrics, client, test_string
                 )
             )
-            tasks.append(new_task)
-        else:
+            tasks.add(new_task)
+
+            if duration and time.time() - start_time > duration.total_seconds():
+                break
+        if tasks:
             # Wait for any task to be completed
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            tasks = [task for task in tasks if not task.done()]
+            tasks.difference_update(done)
 
     # Await any remaining tasks
     if tasks:
         await asyncio.gather(*tasks)
+    await metrics.set_test_complete()
 
 
-def update_live_table(metrics: MetricsTracker, table: Table):
-    # Update the table with the latest metrics
+def update_live_table(metrics: MetricsTracker):
+    # Add rows for each metric in metric tracker
 
-    table.rows[0].cells[1].text = str(metrics.successful_calls)
+    table = Table(show_header=True, header_style="bold magenta")
 
-    table.rows[1].cells[1].text = str(metrics.unsuccessful_calls)
+    table.add_column("Metric", style="dim", width=20)
+    table.add_column("Value")
 
-    table.rows[2].cells[1].text = str(metrics.active_calls)
+    logging.info("Updating-table")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_row("Active Calls", str(metrics["active_calls"]))
+    table.add_row("Active Successful Calls", str(metrics["active_successful_calls"]))
+    table.add_row("Successful Calls", str(metrics["successful_calls"]))
+    table.add_row("Unsuccessful Calls", str(metrics["unsuccessful_calls"]))
+    table.add_row("Max Concurrent Calls", str(metrics["max_concurrent_calls"]))
+    table.add_row("Rate Limit", str(metrics["rate_limit"]))
+    table.add_row("Total TPM", str(metrics["total_tpm"]))
+    table.add_row("Total Token", str(metrics["total_tokens"]))
 
-    table.rows[3].cells[1].text = str(metrics.max_concurrent_calls)
-
-    table.rows[4].cells[1].text = f"{metrics.total_tpm:.2f}"
-
-    table.rows[5].cells[1].text = str(metrics.rate_limit)
-
-    table.rows[6].cells[1].text = str(metrics.total_token)
-
-    table.rows[7].cells[1].text = str(metrics.active_successful_calls)
-
-    table.rows[8].cells[1].text = str(metrics.max_concurrent_successful_calls)
+    return table
 
 
-async def monitor_metrics(metrics: MetricsTracker, table: Table, interval: int):
+async def monitor_metrics(
+    metrics: MetricsTracker, table: Table, interval: int, live: Live
+):
     while True:
-        update_live_table(metrics, table)
-
+        curr_metrics = await metrics.get_metrics()
+        new_table = update_live_table(curr_metrics)
+        live.update(new_table)
         await asyncio.sleep(interval)
 
 
-async def async_main(args, console, table, metrics, test_string, client):
+async def async_main(
+    args,
+    console: Console,
+    table: Table,
+    metrics: MetricsTracker,
+    test_string: str,
+    client: AsyncAzureOpenAI,
+    live: Live,
+):
     duration: Optional[timedelta] = parse_duration(args.duration)
-
+    logging.info(duration)
     # Set the update interval for the live table in seconds
 
-    update_interval = 1
-
-    monitor_task = asyncio.create_task(monitor_metrics(metrics, table, update_interval))
+    update_interval = 3
 
     try:
-        await perform_tests(
-            args.api_key,
-            args.concurrency_level,
-            args.token_count,
-            args.model,
-            duration,
-            metrics,
-            client,
-            test_string,
+        monitor_task = asyncio.create_task(
+            monitor_metrics(metrics, table, update_interval, live)
         )
-
+        test_task = asyncio.create_task(
+            perform_tests(
+                args.api_key,
+                args.concurrency_level,
+                args.token_count,
+                args.model,
+                duration,
+                metrics,
+                client,
+                test_string,
+            )
+        )
+        await asyncio.gather(test_task, monitor_task)
+        logging.info(
+            f"Active Calls: {metrics.active_calls},\n Active Successful Calls: {metrics.active_successful_calls},\n Successful Calls: {metrics.successful_calls},\n Unsuccessful Calls: {metrics.unsuccessful_calls},\n Max Concurrent Calls: {metrics.max_concurrent_calls},\n Rate Limit: {metrics.rate_limit},\n Total TPM: {metrics.total_tpm},\n Total Token: {metrics.total_tokens}"
+        )
     finally:
         monitor_task.cancel()
 
     # Final update to the table before exiting Live context
-
-    update_live_table(metrics, table)
+    live.update(update_live_table(metrics))
 
 
 # Main entry point
@@ -298,45 +363,23 @@ def main():
     table.add_column("Value")
 
     # Add rows for each metric in metric tracker
-    table.add_row("Successful Calls", "0")
-    table.add_row("Unsuccessful Calls", "0")
-    table.add_row("Active Calls", "0")
-    table.add_row("Max Concurrent Calls", "0")
-    table.add_row("Total TPM", "0")
-    table.add_row("Rate Limit", "0")
-    table.add_row("Total Token", "0")
-    table.add_row("Active Successful Calls", "0")
-    table.add_row("Max Concurrent Successful Calls", "0")
 
-    update_interval = 1
+    table.add_row("Active Calls", str(metrics.active_calls))
+    table.add_row("Active Successful Calls", str(metrics.active_successful_calls))
+    table.add_row("Successful Calls", str(metrics.successful_calls))
+    table.add_row("Unsuccessful Calls", str(metrics.unsuccessful_calls))
+    table.add_row("Max Concurrent Calls", str(metrics.max_concurrent_calls))
+    table.add_row("Rate Limit", str(metrics.rate_limit))
+    table.add_row("Total TPM", str(metrics.total_tpm))
+    table.add_row("Total Token", str(metrics.total_tokens))
 
-    with Live(table, console=console, refresh_per_second=10) as live:
-        asyncio.run(async_main(args, console, table, metrics, test_string, client))
-        # monitor_task = asyncio.create_task(
-        #     monitor_metrics(metrics, table, update_interval)
-        # )
+    with Live(table, console=console, refresh_per_second=3) as live:
+        asyncio.run(
+            async_main(args, console, table, metrics, test_string, client, live)
+        )
+        # print all of metrics
 
-        # asyncio.run(
-        #     perform_tests(
-        #         args.api_key,
-        #         args.concurrency_level,
-        #         args.token_count,
-        #         args.model,
-        #         duration,
-        #         metrics,
-        #         client,
-        #         test_string,
-        #     )
-        # )
-
-        # # Once the tests are done, cancel the monitoring task
-        # monitor_task.cancel()
-
-        # # Final update to the table before exiting Live context
-
-        # update_live_table(metrics, table)
-
-    console.print(table)
+        live.update(update_live_table(metrics, table))
 
 
 if __name__ == "__main__":
