@@ -35,8 +35,8 @@ class LiveMonitor:
                 live.update(table)
                 await asyncio.sleep(update_interval)
 
-    def final_update(self) -> None:
+    async def final_update(self) -> None:
         # This is called once the test is complete to do a final update of the table
         table = self.create_table()
-        asyncio.run(self.update_table(table))
+        await self.update_table(table)
         self.live.update(table)

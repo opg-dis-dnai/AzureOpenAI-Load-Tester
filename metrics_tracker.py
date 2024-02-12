@@ -10,8 +10,10 @@ class MetricsTracker:
             "active_calls": 0,
             "successful_calls": 0,
             "unsuccessful_calls": 0,
+            "total_calls": 0,
             "max_concurrent_calls": 0,
-            "total_tokens": 0,
+            "total_input_tokens": 0,
+            "sucessful_token_count": 0,
             "start_time": time.time(),
             "test_complete": False,
             "rate_limit_calls": 0,
@@ -27,8 +29,7 @@ class MetricsTracker:
                         self.metrics["max_concurrent_calls"],
                         self.metrics["active_calls"],
                     )
-                elif metric_name == "total_tokens":
-                    self.metrics["total_tokens"] += value
+                    self.metrics["active_calls"] += value
                 elif metric_name == "avg_response_time":
                     self.metrics["avg_response_time"] = (
                         self.metrics["avg_response_time"]
@@ -61,7 +62,7 @@ class MetricsTracker:
         async with self.lock:
             elapsed_time = time.time() - self.metrics["start_time"]
             tokens_per_minute = (
-                (self.metrics["total_tokens"] / elapsed_time) * 60
+                (self.metrics["sucessful_token_count"] / elapsed_time) * 60
                 if elapsed_time > 0
                 else 0
             )

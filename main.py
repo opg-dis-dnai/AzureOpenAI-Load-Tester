@@ -1,6 +1,6 @@
 import asyncio
 from parse_args import parse_args, CommandLineArgs
-from util import setup_logging, parse_duration, generate_test_string
+from util import setup_logging, parse_duration, generate_template_string
 from client import AsyncAzureOpenAIClient
 from live_monitor import LiveMonitor
 from metrics_tracker import MetricsTracker
@@ -26,20 +26,30 @@ async def run_test(
         await client.chat_completions(model=args.model, message=message)
 
     async def manage_requests():
-        while end_time is None or asyncio.get_running_loop().time() < end_time:
-            tasks = [
-                asyncio.create_task(perform_request())
-                for _ in range(args.concurrency_level)
-            ]
-            await asyncio.gather(*tasks)
-            # Optional: add a slight delay if needed to manage rate limits or server load
-            await asyncio.sleep(1)  # Adjust as necessary
+        tasks = set()
+        try:
+            while end_time is None or asyncio.get_running_loop().time() < end_time:
+                if tasks:
+                    done, _ = await asyncio.wait(
+                        tasks, timeout=0, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    tasks.difference_update(done)
+
+                while len(tasks) < args.concurrency_level and (
+                    end_time is None or asyncio.get_running_loop().time() < end_time
+                ):
+                    task = asyncio.create_task(perform_request())
+                    tasks.add(task)
+
+                await asyncio.sleep(1)  # Adjust as necessary to manage load
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await metrics_tracker.set_test_complete()
 
     # Start the test
     await asyncio.gather(manage_requests(), live_monitor.monitor_metrics())
-
-    # Mark test as complete to stop the live monitoring
-    await metrics_tracker.set_test_complete()
 
 
 async def main_async():
@@ -47,7 +57,7 @@ async def main_async():
     args = parse_args()
 
     # Setup logging
-    setup_logging()
+    logger = setup_logging()
 
     # Initialize the metrics tracker
     metrics_tracker = MetricsTracker()
@@ -57,19 +67,20 @@ async def main_async():
         azure_endpoint=args.endpoint,
         api_key=args.api_key,
         metrics_tracker=metrics_tracker,
+        logger=logger,
         max_tokens=args.max_tokens,
     )
 
     # Initialize and start the live monitoring
     live_monitor = LiveMonitor(metrics_tracker)
 
-    test_string = generate_test_string(args.token_count)
+    test_string = generate_template_string(args.token_count)
 
     # Run the test
     await run_test(args, client, live_monitor, metrics_tracker, message=test_string)
 
     # Final update to the live monitor
-    live_monitor.final_update()
+    await live_monitor.final_update()
 
 
 def main():
