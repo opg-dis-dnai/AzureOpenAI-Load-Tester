@@ -143,3 +143,9 @@ def generate_template_string(target_token_count: int):
         words.pop()
 
     return " ".join(words)
+
+def promptLooper(listPrompt: list):
+    index = 0
+    while True:
+        yield listPrompt[index]
+        index = (index + 1) % len(listPrompt)

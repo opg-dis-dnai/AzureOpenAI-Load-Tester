@@ -1,6 +1,6 @@
 import asyncio
 from parse_args import parse_args, CommandLineArgs
-from util import setup_logging, parse_duration, generate_template_string
+from util import setup_logging, parse_duration, generate_template_string, promptLooper
 from client import AsyncAzureOpenAIClient
 from live_monitor import LiveMonitor
 from metrics_tracker import MetricsTracker
@@ -74,7 +74,15 @@ async def main_async():
     # Initialize and start the live monitoring
     live_monitor = LiveMonitor(metrics_tracker)
 
-    test_string = generate_template_string(args.token_count)
+    # test_string = generate_template_string(args.token_count)
+    # test_string = "Tell me a very long story"
+
+    prompts = ["Explain the principles of quantum computing to someone with no background in physics. Start with the basics of quantum mechanics, how quantum computers differ from classical computers, and then delve into qubits, superposition, and entanglement. Provide examples of potential applications of quantum computing in various fields, such as cryptography, drug discovery, and climate modeling, highlighting the advantages over traditional computing methods.",
+                "Trace the development of the Internet from its inception to the present day. Describe the technological advancements that made the Internet possible, including the transition from ARPANET to the modern global network. Discuss the impact of the Internet on communication, education, business, and politics, including both positive and negative aspects. Conclude with thoughts on the future of the Internet, considering emerging technologies like 5G, blockchain, and the Internet of Things (IoT).",
+                "Provide an in-depth guide to the most commonly used machine learning algorithms. For each algorithm, explain its working principle, types of problems it solves best, and its advantages and limitations. Include supervised learning algorithms like linear regression and decision trees, unsupervised learning algorithms like k-means clustering, and neural networks, with a focus on deep learning. Use practical examples to illustrate how each algorithm is applied in real-world scenarios, from predictive analytics to image recognition.",
+    ]
+
+    test_string = next(promptLooper(prompts))
 
     # Run the test
     await run_test(args, client, live_monitor, metrics_tracker, message=test_string)

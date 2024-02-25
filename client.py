@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any, Optional
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI 
 from metrics_tracker import MetricsTracker
 import tiktoken
 import time
@@ -25,10 +25,10 @@ class AsyncAzureOpenAIClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        self.client = AsyncAzureOpenAI(
-            azure_endpoint=self.azure_endpoint,
+        self.client = AsyncOpenAI (
+            base_url=self.azure_endpoint,
             api_key=self.api_key,
-            api_version=self.api_version,
+            # api_version=self.api_version,
         )
         self.metrics_tracker = metrics_tracker
         self.tiktoken = tiktoken.get_encoding("cl100k_base")
