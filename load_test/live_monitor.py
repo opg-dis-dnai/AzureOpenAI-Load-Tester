@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.live import Live
 from typing import Optional
 
-from metrics_tracker import MetricsTracker
+from .metrics_tracker import MetricsTracker
 
 
 class LiveMonitor:

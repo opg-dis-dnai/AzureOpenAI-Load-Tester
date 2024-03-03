@@ -6,6 +6,8 @@ from typing import Dict, Any
 class MetricsTracker:
     def __init__(self):
         self.lock = asyncio.Lock()
+        self.start_time = time.time()
+        self.test_complete = False
         self.metrics: Dict[str, Any] = {
             "active_calls": 0,
             "successful_calls": 0,
@@ -14,8 +16,6 @@ class MetricsTracker:
             "max_concurrent_calls": 0,
             "total_input_tokens": 0,
             "sucessful_token_count": 0,
-            "start_time": time.time(),
-            "test_complete": False,
             "rate_limit_calls": 0,
             "avg_response_time": 0,
         }
@@ -60,17 +60,20 @@ class MetricsTracker:
 
     async def get_metrics(self) -> Dict[str, Any]:
         async with self.lock:
-            elapsed_time = time.time() - self.metrics["start_time"]
+            elapsed_time = time.time() - self.start_time
             tokens_per_minute = (
                 (self.metrics["sucessful_token_count"] / elapsed_time) * 60
                 if elapsed_time > 0
                 else 0
             )
 
-            return dict(self.metrics, tokens_per_minute=tokens_per_minute)
+            return dict(
+                self.metrics,
+                tokens_per_minute=tokens_per_minute,
+            )
 
     async def set_test_complete(self, value: bool = True) -> None:
-        await self.set_metric("test_complete", value)
+        self.test_complete = value
 
     async def is_test_complete(self) -> bool:
-        return await self.get_metric("test_complete")
+        return self.test_complete
