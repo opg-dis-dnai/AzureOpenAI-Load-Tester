@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 import re
 import argparse
-from typing import Optional
+from typing import Optional, List
 import wonderwords
 import tiktoken
 import random
@@ -144,8 +144,10 @@ def generate_template_string(target_token_count: int):
 
     return " ".join(words)
 
-def promptLooper(listPrompt: list):
+
+def prompt_looper(prompt_list: List[str]):
     index = 0
     while True:
-        yield listPrompt[index]
-        index = (index + 1) % len(listPrompt)
+        prompt = prompt_list[index]
+        yield prompt
+        index = (index + 1) % len(prompt_list)
