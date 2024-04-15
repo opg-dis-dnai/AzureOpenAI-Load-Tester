@@ -23,7 +23,7 @@ class AsyncClient:
         metrics_tracker: MetricsTracker,
         logger: Logger,
         max_tokens: int = None,
-        api_version: str = "2023-05-15",
+        api_version: str = "2024-02-01",
         client_type: Literal["azure", "openai", "custom"] = "azure",
         tiktoken_encoding: str = "cl100k_base",
     ) -> None:
