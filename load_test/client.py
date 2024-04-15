@@ -5,6 +5,9 @@ from .metrics_tracker import MetricsTracker
 import tiktoken
 import time
 from logging import Logger
+import uuid
+import json
+from .util import random_prompt
 
 try:
     from .custom_handler import CustomClient
@@ -60,19 +63,30 @@ class AsyncClient:
     async def chat_completions(
         self,
         model: str,
-        message: str,
     ) -> Dict[str, Any]:
+        message = random_prompt()
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": message}],
             "max_tokens": self.max_tokens,
         }
-        token_count = len(self.tiktoken.encode(message))
-        await self.metrics_tracker.update_metric("total_input_tokens", token_count)
+        msg_token_count = len(self.tiktoken.encode(message))
+        await self.metrics_tracker.update_metric("total_input_tokens", msg_token_count)
+        id = str(uuid.uuid4())
+
+        log_req_message = {
+            "type": "request",
+            "id": id,
+            "payload": payload,
+            "token_count": msg_token_count,
+            "timestamp": time.time(),
+        }
+
+        self.logger.info(json.dumps(log_req_message))
+
         start_time = time.perf_counter()
 
         try:
-            self.logger.info(f"Sending request with payload. id: {id(payload)}")
             await self.metrics_tracker.update_metric("active_calls", 1)
 
             if self.client_type == "custom":
@@ -85,32 +99,46 @@ class AsyncClient:
                     messages=payload["messages"],
                     max_tokens=payload["max_tokens"],
                 )
-            self.logger.info(f"Received response from API. id: {id(payload)}")
+
             end_time = time.perf_counter()
             response_time = end_time - start_time
+
             await self.metrics_tracker.update_metric("avg_response_time", response_time)
+
             token_count = (
                 response.usage.total_tokens
                 if self.client_type != "custom"
                 else self.client.custom_response_handler(response)
             )
+
             if type(token_count) != int:
                 raise ValueError(f"Unsupported token count type: {type(token_count)}")
-            await self.metrics_tracker.update_metric(
-                "sucessful_token_count", token_count + token_count
-            )
+
+            await self.metrics_tracker.update_metric("total_token_count", token_count)
+
+            log_res_message = {
+                "type": "response",
+                "id": id,
+                "response_time": response_time,
+                "token_count": token_count,
+                "timestamp": time.time(),
+            }
+            self.logger.info(json.dumps(log_res_message))
 
         except (httpx.HTTPStatusError, APIError) as e:
 
             if e.response.status_code == 429:
                 # Rate limit exceeded
                 await self.metrics_tracker.update_metric("rate_limit_calls", 1)
-            self.logger.warning("Error here")
             await self.metrics_tracker.update_metric("unsuccessful_calls", 1)
-            self.logger.error(
-                f"Received error response from API. id: {id(payload)} status_code: {e.response.status_code} response: {e.response.json()}"
-            )
-            raise e
+            log_err_message = {
+                "type": "error",
+                "id": id,
+                "status_code": e.response.status_code,
+                "response": e.response.json(),
+                "timestamp": time.time(),
+            }
+            self.logger.error(json.dumps(log_err_message))
         finally:
             await self.metrics_tracker.update_metric("active_calls", -1)
             await self.metrics_tracker.update_metric("total_calls", 1)

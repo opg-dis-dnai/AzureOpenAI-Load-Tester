@@ -6,6 +6,7 @@ from typing import Optional, List
 import wonderwords
 import tiktoken
 import random
+from .prompts import prompts
 
 
 # Logging configuration utility
@@ -19,7 +20,7 @@ def setup_logging(
         filename=filename,
     )
     logger = logging.getLogger(__name__)
-    return logger
+    return logger, filename
 
 
 # Utility to parse the duration string into a timedelta object
@@ -145,9 +146,5 @@ def generate_template_string(target_token_count: int):
     return " ".join(words)
 
 
-def prompt_looper(prompt_list: List[str]):
-    index = 0
-    while True:
-        prompt = prompt_list[index]
-        yield prompt
-        index = (index + 1) % len(prompt_list)
+def random_prompt() -> str:
+    return random.choice(prompts)

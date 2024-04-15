@@ -1,7 +1,7 @@
 import asyncio
 from .parse_args import parse, CommandLineArgs
-from .util import setup_logging, parse_duration, generate_template_string, prompt_looper
-from .prompts import prompts
+from .util import setup_logging, parse_duration, generate_template_string
+
 from .client import AsyncClient
 from .live_monitor import LiveMonitor
 from .metrics_tracker import MetricsTracker
@@ -12,7 +12,6 @@ async def run_test(
     client: AsyncClient,
     live_monitor: LiveMonitor,
     metrics_tracker: MetricsTracker,
-    message: str,
 ):
     # Convert duration string to timedelta
     duration = parse_duration(args.duration)
@@ -23,8 +22,9 @@ async def run_test(
     )
 
     async def perform_request():
+
         # Generate a test string or payload here as needed
-        await client.chat_completions(model=args.model, message=message)
+        await client.chat_completions(model=args.model)
 
     async def manage_requests():
         tasks = set()
@@ -58,7 +58,7 @@ async def main_async():
     args = parse()
 
     # Setup logging
-    logger = setup_logging()
+    logger, log_file = setup_logging()
 
     # Initialize the metrics tracker
     metrics_tracker = MetricsTracker()
@@ -78,10 +78,8 @@ async def main_async():
     # Initialize and start the live monitoring
     live_monitor = LiveMonitor(metrics_tracker)
 
-    test_string = next(prompt_looper(prompts))
-
     # Run the test
-    await run_test(args, client, live_monitor, metrics_tracker, message=test_string)
+    await run_test(args, client, live_monitor, metrics_tracker)
 
     # Final update to the live monitor
     await live_monitor.final_update()
