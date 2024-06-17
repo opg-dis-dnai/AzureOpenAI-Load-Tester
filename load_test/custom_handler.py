@@ -17,14 +17,18 @@ class CustomClient:
         self, model: str, message: str, max_tokens: int = None
     ) -> httpx.Response:
         # Replace with the actual request logic for your custom API
-        payload = {"messages": [{"role": "user", "content": message}], "model": model}
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
+        payload = {
+            "messages": [{"role": "user", "content": message}],
+            "model": model,
         }
 
-        async with httpx.AsyncClient() as client:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "OpenAI-API-Client/3.0.0",
+        }
+
+        async with httpx.AsyncClient(timeout=500) as client:
             response = await client.post(
                 self.endpoint,
                 json=payload,
@@ -34,17 +38,15 @@ class CustomClient:
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as http_err:
-
                 raise APIError(f"HTTP error occurred: {http_err}") from http_err
             except httpx.RequestError as req_err:
-
                 raise APIError(f"Request error occurred: {req_err}") from req_err
 
-        return response
+            return response
 
     def custom_response_handler(self, response: httpx.Response) -> int:
         # Replace with the actual response processing logic for the custom API. must return token count
 
         result = response.json()
-        output = result["output"]
-        return len(self.tiktoken.encode(output))
+        output = result["usage"]["total_tokens"]
+        return output

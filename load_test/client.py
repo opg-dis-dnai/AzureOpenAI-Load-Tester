@@ -48,6 +48,7 @@ class AsyncClient:
                 self.client = AsyncOpenAI(
                     base_url=self.endpoint,
                     api_key=self.api_key,
+                    timeout=500,
                 )
             case "custom":
                 if CustomClient is None:
@@ -111,6 +112,11 @@ class AsyncClient:
                 else self.client.custom_response_handler(response)
             )
 
+            if self.client_type in ["openai", "azure"]:
+                await self.metrics_tracker.update_metric(
+                    "total_output_tokens", response.usage.completion_tokens
+                )
+
             if type(token_count) != int:
                 raise ValueError(f"Unsupported token count type: {type(token_count)}")
 
@@ -126,7 +132,6 @@ class AsyncClient:
             self.logger.info(json.dumps(log_res_message))
 
         except (httpx.HTTPStatusError, APIError) as e:
-
             if e.response.status_code == 429:
                 # Rate limit exceeded
                 await self.metrics_tracker.update_metric("rate_limit_calls", 1)

@@ -26,7 +26,6 @@ class MetricsTracker:
     async def update_metric(self, metric_name: str, value: int):
         async with self.lock:
             if metric_name in self.metrics:
-
                 if metric_name == "active_calls":
                     self.metrics["max_concurrent_calls"] = max(
                         self.metrics["max_concurrent_calls"],
@@ -42,11 +41,11 @@ class MetricsTracker:
                     self.metrics["successful_calls"] += 1
                     self.response_times.append(value)
                 elif metric_name == "total_token_count":
+                    # self.metrics["total_output_tokens"] = (
+                    #     (self.metrics["total_token_count"] + value)
+                    #     - self.metrics["total_input_tokens"]
+                    # )
                     self.metrics["total_token_count"] += value
-                    self.metrics["total_output_tokens"] = (
-                        self.metrics["total_token_count"]
-                        - self.metrics["total_input_tokens"]
-                    )
                 else:
                     self.metrics[metric_name] += value
 
@@ -75,7 +74,7 @@ class MetricsTracker:
             # limit to 2 decimal places
 
             tokens_per_minute = int(
-                (self.metrics["total_token_count"] / elapsed_min)
+                (self.metrics["total_output_tokens"] / elapsed_min)
                 if elapsed_time > 0
                 else 0
             )
